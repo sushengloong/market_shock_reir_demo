@@ -1,4 +1,6 @@
-# auth_stream_reir_demo (repo name retained for compatibility)
+# auth_stream_reir_demo
+
+Repository: `git@github.com:sushengloong/auth_stream_reir_demo.git`
 
 Plain-vanilla Python target project for `reir` demos.
 
@@ -49,7 +51,7 @@ pip install -e .
 ```bash
 python -m slowlib.benchmarks.bench --scenario 1a --phase before --json-out .reir/before_1a.json
 python -m slowlib.benchmarks.bench --scenario 1a --phase after --json-out .reir/after_1a.json
-python -m slowlib.benchmarks.bench --scenario 2 --phase before --workers 4 --gil-demo --scaling-workers 1,2,4,8 --json-out .reir/scenario2_before.json
+python -m slowlib.benchmarks.bench --scenario 2 --phase before --workers 4 --gil-demo --scaling-workers 1,2,4 --json-out .reir/scenario2_before.json
 ```
 
 The benchmark prints deterministic JSON with median/p95 and optional scaling table.

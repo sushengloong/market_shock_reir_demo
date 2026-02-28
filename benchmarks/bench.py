@@ -252,7 +252,7 @@ def main() -> None:
     parser.add_argument("--phase", default="before", choices=["before", "after"])
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--gil-demo", action="store_true", help="Add worker-scaling table for current scenario phase")
-    parser.add_argument("--scaling-workers", default="1,2,4,8", help="Comma-separated worker counts for --gil-demo")
+    parser.add_argument("--scaling-workers", default="1,2,4", help="Comma-separated worker counts for --gil-demo")
     parser.add_argument("--json-out", type=Path, default=None)
     parser.add_argument("--profile", action="store_true", help="No-op flag for compatibility")
     args = parser.parse_args()
