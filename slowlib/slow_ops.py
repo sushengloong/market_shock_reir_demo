@@ -199,7 +199,7 @@ def _chunk_lines(lines: list[str], workers: int) -> list[list[str]]:
     return [lines[i : i + chunk_size] for i in range(0, len(lines), chunk_size)]
 
 def process_json_lines_py_mt(lines: Iterable[str], workers: int = 4) -> dict[str, object]:
-    line_list = list(lines)
+    line_list = lines if isinstance(lines, list) else list(lines)
     if not line_list:
         return process_json_lines_py([])
     chunks = _chunk_lines(line_list, workers)
@@ -208,7 +208,7 @@ def process_json_lines_py_mt(lines: Iterable[str], workers: int = 4) -> dict[str
     return _merge_results(parts)
 
 async def process_json_lines_py_async(lines: Iterable[str], workers: int = 4) -> dict[str, object]:
-    line_list = list(lines)
+    line_list = lines if isinstance(lines, list) else list(lines)
     if not line_list:
         return process_json_lines_py([])
 
@@ -219,11 +219,35 @@ async def process_json_lines_py_async(lines: Iterable[str], workers: int = 4) ->
         parts = await asyncio.gather(*tasks)
     return _merge_results(list(parts))
 
-def process_json_lines_rust(lines: Iterable[str], rust_mode: str = "st", workers: int = 4) -> dict[str, object]:
-    line_list = list(lines)
+def _coerce_jsonl_payload(lines: object) -> str | None:
+    if isinstance(lines, str):
+        return lines
+    if isinstance(lines, bytes):
+        return lines.decode("utf-8")
+    return None
+
+
+def process_json_lines_rust(lines: Iterable[str] | str, rust_mode: str = "st", workers: int = 4) -> dict[str, object]:
+    payload = _coerce_jsonl_payload(lines)
+    line_list: list[str] | None = None
+    if payload is None:
+        line_list = lines if isinstance(lines, list) else list(lines)
     try:
         import reir_ext  # type: ignore
 
+        if payload is not None:
+            if rust_mode == "mt" and hasattr(reir_ext, "process_jsonl_mt"):
+                result = reir_ext.process_jsonl_mt(payload, int(max(1, workers)))
+                return _normalize_rust_aggregate(dict(result))
+            if rust_mode == "async" and hasattr(reir_ext, "process_jsonl_async"):
+                result = reir_ext.process_jsonl_async(payload)
+                return _normalize_rust_aggregate(dict(result))
+            if hasattr(reir_ext, "process_jsonl_st"):
+                result = reir_ext.process_jsonl_st(payload)
+                return _normalize_rust_aggregate(dict(result))
+            line_list = payload.splitlines()
+
+        assert line_list is not None
         if rust_mode == "mt" and hasattr(reir_ext, "process_lines_mt"):
             result = reir_ext.process_lines_mt(line_list, int(max(1, workers)))
             return _normalize_rust_aggregate(dict(result))
@@ -249,13 +273,15 @@ def process_json_lines_rust(lines: Iterable[str], rust_mode: str = "st", workers
     except Exception:
         pass
 
+    if line_list is None:
+        line_list = payload.splitlines() if payload else []
+
     if rust_mode == "mt":
         return process_json_lines_py_mt(line_list, workers=workers)
     if rust_mode == "async":
         return asyncio.run(process_json_lines_py_async(line_list, workers=workers))
     return process_json_lines_py(line_list)
 
-async def process_json_lines_rust_async(lines: Iterable[str], workers: int = 4) -> dict[str, object]:
-    line_list = list(lines)
+async def process_json_lines_rust_async(lines: Iterable[str] | str, workers: int = 4) -> dict[str, object]:
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, process_json_lines_rust, line_list, "async", workers)
+    return await loop.run_in_executor(None, process_json_lines_rust, lines, "async", workers)

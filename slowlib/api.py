@@ -4,6 +4,7 @@ import asyncio
 import json
 import random
 from dataclasses import dataclass
+from typing import Iterator
 
 from .slow_ops import (
     process_json_lines,
@@ -22,11 +23,10 @@ class WorkloadConfig:
     story_mode: str = "normal"
 
 
-def generate_json_lines(size: int, seed: int = 42, story_mode: str = "normal") -> list[str]:
+def _iter_json_lines(size: int, seed: int = 42, story_mode: str = "normal") -> Iterator[str]:
     rnd = random.Random(seed)
     symbols = ["AAPL", "MSFT", "NVDA", "TSLA", "AMD", "AMZN"]
     venues = ["XNYS", "XNAS", "ARCX", "BATS"]
-    lines: list[str] = []
 
     for i in range(size):
         symbol = symbols[i % len(symbols)]
@@ -68,9 +68,17 @@ def generate_json_lines(size: int, seed: int = 42, story_mode: str = "normal") -
             "headline": headline,
             "event_id": i,
         }
-        lines.append(json.dumps(obj, separators=(",", ":")))
+        yield json.dumps(obj, separators=(",", ":"))
 
-    return lines
+
+def generate_json_lines(size: int, seed: int = 42, story_mode: str = "normal") -> list[str]:
+    return list(_iter_json_lines(size=size, seed=seed, story_mode=story_mode))
+
+
+def generate_json_payload(size: int, seed: int = 42, story_mode: str = "normal") -> str:
+    # Use a single JSONL payload for Rust paths to avoid per-line Python->Rust
+    # conversion/allocation overhead across the FFI boundary.
+    return "\n".join(_iter_json_lines(size=size, seed=seed, story_mode=story_mode))
 
 
 def run_workload(
@@ -80,22 +88,27 @@ def run_workload(
     execution_mode: str = "auto",
     workers: int = 4,
 ) -> dict[str, object]:
-    lines = generate_json_lines(size=size, seed=seed, story_mode=story_mode)
-
     if execution_mode == "auto":
+        lines = generate_json_lines(size=size, seed=seed, story_mode=story_mode)
         return process_json_lines(lines, workers=workers)
     if execution_mode == "python_st":
+        lines = generate_json_lines(size=size, seed=seed, story_mode=story_mode)
         return process_json_lines_py(lines)
     if execution_mode == "python_mt":
+        lines = generate_json_lines(size=size, seed=seed, story_mode=story_mode)
         return process_json_lines_py_mt(lines, workers=workers)
     if execution_mode == "python_async":
+        lines = generate_json_lines(size=size, seed=seed, story_mode=story_mode)
         return asyncio.run(process_json_lines_py_async(lines, workers=workers))
 
     if execution_mode == "rust_st":
-        return process_json_lines_rust(lines, rust_mode="st", workers=workers)
+        payload = generate_json_payload(size=size, seed=seed, story_mode=story_mode)
+        return process_json_lines_rust(payload, rust_mode="st", workers=workers)
     if execution_mode == "rust_mt":
-        return process_json_lines_rust(lines, rust_mode="mt", workers=workers)
+        payload = generate_json_payload(size=size, seed=seed, story_mode=story_mode)
+        return process_json_lines_rust(payload, rust_mode="mt", workers=workers)
     if execution_mode == "rust_async":
-        return asyncio.run(process_json_lines_rust_async(lines, workers=workers))
+        payload = generate_json_payload(size=size, seed=seed, story_mode=story_mode)
+        return asyncio.run(process_json_lines_rust_async(payload, workers=workers))
 
     raise ValueError(f"Unknown execution_mode: {execution_mode}")
