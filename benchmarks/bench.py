@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import resource
 import statistics
+import sys
 import time
 from pathlib import Path
 
@@ -37,6 +39,13 @@ SCENARIOS: dict[str, dict[str, str]] = {
         "after_mode": "rust_async",
     },
 }
+
+
+def _ru_maxrss_to_mb(raw_value: float) -> float:
+    # On macOS ru_maxrss is bytes; on Linux it's KiB.
+    if sys.platform == "darwin":
+        return float(raw_value) / (1024.0 * 1024.0)
+    return float(raw_value) / 1024.0
 
 
 def parse_workers(workers_spec: str) -> list[int]:
@@ -81,9 +90,14 @@ def run_benchmark(
 ) -> dict[str, object]:
     mode = execution_mode_for_scenario(scenario, phase)
     timings_ms: list[float] = []
+    cpu_util_pct: list[float] = []
+    peak_rss_mb: list[float] = []
+    peak_rss_delta_mb: list[float] = []
     checksum = None
 
     for run_idx in range(runs):
+        rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        cpu_t0 = time.process_time()
         t0 = time.perf_counter()
         result = run_workload(
             size=size,
@@ -92,8 +106,15 @@ def run_benchmark(
             execution_mode=mode,
             workers=workers,
         )
-        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        elapsed_s = time.perf_counter() - t0
+        elapsed_ms = elapsed_s * 1000.0
+        cpu_elapsed = time.process_time() - cpu_t0
+        rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
         timings_ms.append(elapsed_ms)
+        cpu_util_pct.append((cpu_elapsed / elapsed_s) * 100.0 if elapsed_s > 0 else 0.0)
+        peak_rss_mb.append(_ru_maxrss_to_mb(rss_after))
+        peak_rss_delta_mb.append(_ru_maxrss_to_mb(max(0.0, float(rss_after - rss_before))))
         checksum = result["checksum"]
 
     return {
@@ -107,6 +128,10 @@ def run_benchmark(
         "story_mode": story_mode,
         "median_ms": round(statistics.median(timings_ms), 3),
         "p95_ms": round(percentile(timings_ms, 0.95), 3),
+        "cpu_util_pct_median": round(statistics.median(cpu_util_pct), 3),
+        "cpu_util_pct_p95": round(percentile(cpu_util_pct, 0.95), 3),
+        "peak_rss_mb_max": round(max(peak_rss_mb), 3) if peak_rss_mb else 0.0,
+        "peak_rss_delta_mb_median": round(statistics.median(peak_rss_delta_mb), 3),
         "checksum": checksum,
     }
 
@@ -145,13 +170,25 @@ def run_scaling_demo(
 
     for worker_count in workers:
         timings_ms: list[float] = []
+        cpu_util_pct: list[float] = []
+        peak_rss_mb: list[float] = []
+        peak_rss_delta_mb: list[float] = []
         checksum = None
 
         for run_idx in range(runs):
+            rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            cpu_t0 = time.process_time()
             t0 = time.perf_counter()
             result_checksum = parallel_once(worker_count, seed + run_idx * 100_003)
-            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            elapsed_s = time.perf_counter() - t0
+            elapsed_ms = elapsed_s * 1000.0
+            cpu_elapsed = time.process_time() - cpu_t0
+            rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
             timings_ms.append(elapsed_ms)
+            cpu_util_pct.append((cpu_elapsed / elapsed_s) * 100.0 if elapsed_s > 0 else 0.0)
+            peak_rss_mb.append(_ru_maxrss_to_mb(rss_after))
+            peak_rss_delta_mb.append(_ru_maxrss_to_mb(max(0.0, float(rss_after - rss_before))))
             checksum = result_checksum
 
         median_ms = statistics.median(timings_ms)
@@ -170,6 +207,10 @@ def run_scaling_demo(
                 "throughput_events_per_s": round(throughput_eps, 3),
                 "latency_speedup_vs_1_worker": round(baseline_median_ms / median_ms, 3),
                 "throughput_gain_vs_1_worker": round(throughput_eps / baseline_throughput, 3),
+                "cpu_util_pct_median": round(statistics.median(cpu_util_pct), 3),
+                "cpu_util_pct_p95": round(percentile(cpu_util_pct, 0.95), 3),
+                "peak_rss_mb_max": round(max(peak_rss_mb), 3) if peak_rss_mb else 0.0,
+                "peak_rss_delta_mb_median": round(statistics.median(peak_rss_delta_mb), 3),
                 "checksum": checksum,
             }
         )
