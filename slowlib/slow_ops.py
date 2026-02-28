@@ -7,7 +7,6 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable
 
-
 MACRO_KEYWORDS = (
     "liberation",
     "day",
@@ -23,14 +22,12 @@ MACRO_KEYWORDS = (
 VENUES = ("XNYS", "XNAS", "ARCX", "BATS")
 CHECKSUM_MOD = 1_000_000_007
 
-
 def process_json_lines(lines: Iterable[str], workers: int = 4) -> dict[str, object]:
     """Default path before Rust apply: pure Python single-thread."""
     _ = workers
     return process_json_lines_py(lines)
 
-
-def _merge_results_py_py_py(parts: list[dict[str, object]]) -> dict[str, object]:
+def _merge_results(parts: list[dict[str, object]]) -> dict[str, object]:
     merged_notional: dict[str, float] = {}
     merged_venue: dict[str, int] = {}
     shock = 0
@@ -55,26 +52,7 @@ def _merge_results_py_py_py(parts: list[dict[str, object]]) -> dict[str, object]
         "count": count,
     }
 
-
-def _normalize_rust_aggregate(result: dict[str, object]) -> dict[str, object]:
-    rounded_notional = {
-        str(symbol): round(float(value), 4)
-        for symbol, value in dict(result.get("notional_by_symbol", {})).items()
-    }
-    venue_volume = {
-        str(venue): int(volume)
-        for venue, volume in dict(result.get("venue_volume", {})).items()
-    }
-    return {
-        "notional_by_symbol": rounded_notional,
-        "venue_volume": venue_volume,
-        "shock_score": int(result.get("shock_score", 0)),
-        "checksum": int(result.get("checksum", 0)) % CHECKSUM_MOD,
-        "count": int(result.get("count", 0)),
-    }
-
-
-def process_json_lines_py_py_py_py(lines: Iterable[str]) -> dict[str, object]:
+def process_json_lines_py(lines: Iterable[str]) -> dict[str, object]:
     notional_by_symbol: dict[str, float] = {}
     venue_volume: dict[str, int] = {}
     shock_score = 0
@@ -141,8 +119,7 @@ def process_json_lines_py_py_py_py(lines: Iterable[str]) -> dict[str, object]:
         "count": count,
     }
 
-
-def _aggregate_from_objects_py_py_py(objs: Iterable[dict[str, object]]) -> dict[str, object]:
+def _aggregate_from_objects(objs: Iterable[dict[str, object]]) -> dict[str, object]:
     notional_by_symbol: dict[str, float] = {}
     venue_volume: dict[str, int] = {}
     shock_score = 0
@@ -195,13 +172,11 @@ def _aggregate_from_objects_py_py_py(objs: Iterable[dict[str, object]]) -> dict[
         "count": count,
     }
 
-
 def _chunk_lines(lines: list[str], workers: int) -> list[list[str]]:
     if workers <= 1:
         return [lines]
     chunk_size = max(1, math.ceil(len(lines) / workers))
     return [lines[i : i + chunk_size] for i in range(0, len(lines), chunk_size)]
-
 
 def process_json_lines_py_mt(lines: Iterable[str], workers: int = 4) -> dict[str, object]:
     line_list = list(lines)
@@ -211,7 +186,6 @@ def process_json_lines_py_mt(lines: Iterable[str], workers: int = 4) -> dict[str
     with ThreadPoolExecutor(max_workers=min(max(1, workers), len(chunks))) as pool:
         parts = list(pool.map(process_json_lines_py, chunks))
     return _merge_results(parts)
-
 
 async def process_json_lines_py_async(lines: Iterable[str], workers: int = 4) -> dict[str, object]:
     line_list = list(lines)
@@ -225,21 +199,10 @@ async def process_json_lines_py_async(lines: Iterable[str], workers: int = 4) ->
         parts = await asyncio.gather(*tasks)
     return _merge_results(list(parts))
 
-
 def process_json_lines_rust(lines: Iterable[str], rust_mode: str = "st", workers: int = 4) -> dict[str, object]:
     line_list = list(lines)
     try:
         import reir_ext  # type: ignore
-
-        if rust_mode == "mt" and hasattr(reir_ext, "process_lines_mt"):
-            result = reir_ext.process_lines_mt(line_list, int(max(1, workers)))
-            return _normalize_rust_aggregate(dict(result))
-        if rust_mode == "async" and hasattr(reir_ext, "process_lines_async"):
-            result = reir_ext.process_lines_async(line_list)
-            return _normalize_rust_aggregate(dict(result))
-        if hasattr(reir_ext, "process_lines_st"):
-            result = reir_ext.process_lines_st(line_list)
-            return _normalize_rust_aggregate(dict(result))
 
         parsed = None
         if rust_mode == "mt" and hasattr(reir_ext, "loads_many_mt"):
@@ -262,99 +225,7 @@ def process_json_lines_rust(lines: Iterable[str], rust_mode: str = "st", workers
         return asyncio.run(process_json_lines_py_async(line_list, workers=workers))
     return process_json_lines_py(line_list)
 
-
 async def process_json_lines_rust_async(lines: Iterable[str], workers: int = 4) -> dict[str, object]:
     line_list = list(lines)
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, process_json_lines_rust, line_list, "async", workers)
-
-# REIR_FASTJSON_HELPERS_START
-
-def _reir_fastjson_loader():
-    try:
-        import reir_ext  # type: ignore
-    except Exception:
-        return None
-
-    for candidate in ("loads", "loads_st"):
-        fn = getattr(reir_ext, candidate, None)
-        if callable(fn):
-            return fn
-    return None
-
-
-def _reir_fastjson_call(fn, args, kwargs):
-    loader = _reir_fastjson_loader()
-    if loader is None:
-        return fn(*args, **kwargs)
-
-    import json as _json
-
-    original = _json.loads
-    _json.loads = loader
-    try:
-        return fn(*args, **kwargs)
-    finally:
-        _json.loads = original
-
-
-async def _reir_fastjson_call_async(fn, args, kwargs):
-    loader = _reir_fastjson_loader()
-    if loader is None:
-        return await fn(*args, **kwargs)
-
-    import json as _json
-
-    original = _json.loads
-    _json.loads = loader
-    try:
-        return await fn(*args, **kwargs)
-    finally:
-        _json.loads = original
-
-# REIR_FASTJSON_HELPERS_END
-
-# REIR_WRAPPER_START:process_json_lines_py
-def process_json_lines_py(*args, **kwargs):
-    return _reir_fastjson_call(process_json_lines_py_py, args, kwargs)
-# REIR_WRAPPER_END:process_json_lines_py
-
-# REIR_WRAPPER_START:_aggregate_from_objects
-def _aggregate_from_objects(*args, **kwargs):
-    return _reir_fastjson_call(_aggregate_from_objects_py, args, kwargs)
-# REIR_WRAPPER_END:_aggregate_from_objects
-
-# REIR_WRAPPER_START:_merge_results
-def _merge_results(*args, **kwargs):
-    return _reir_fastjson_call(_merge_results_py, args, kwargs)
-# REIR_WRAPPER_END:_merge_results
-
-# REIR_WRAPPER_START:process_json_lines_py_py
-def process_json_lines_py_py(*args, **kwargs):
-    return _reir_fastjson_call(process_json_lines_py_py_py, args, kwargs)
-# REIR_WRAPPER_END:process_json_lines_py_py
-
-# REIR_WRAPPER_START:_aggregate_from_objects_py
-def _aggregate_from_objects_py(*args, **kwargs):
-    return _reir_fastjson_call(_aggregate_from_objects_py_py, args, kwargs)
-# REIR_WRAPPER_END:_aggregate_from_objects_py
-
-# REIR_WRAPPER_START:_merge_results_py
-def _merge_results_py(*args, **kwargs):
-    return _reir_fastjson_call(_merge_results_py_py, args, kwargs)
-# REIR_WRAPPER_END:_merge_results_py
-
-# REIR_WRAPPER_START:process_json_lines_py_py_py
-def process_json_lines_py_py_py(*args, **kwargs):
-    return _reir_fastjson_call(process_json_lines_py_py_py_py, args, kwargs)
-# REIR_WRAPPER_END:process_json_lines_py_py_py
-
-# REIR_WRAPPER_START:_aggregate_from_objects_py_py
-def _aggregate_from_objects_py_py(*args, **kwargs):
-    return _reir_fastjson_call(_aggregate_from_objects_py_py_py, args, kwargs)
-# REIR_WRAPPER_END:_aggregate_from_objects_py_py
-
-# REIR_WRAPPER_START:_merge_results_py_py
-def _merge_results_py_py(*args, **kwargs):
-    return _reir_fastjson_call(_merge_results_py_py_py, args, kwargs)
-# REIR_WRAPPER_END:_merge_results_py_py
