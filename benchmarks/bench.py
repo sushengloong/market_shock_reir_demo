@@ -21,14 +21,6 @@ SCENARIOS: dict[str, dict[str, str]] = {
         "workers_default": "1",
         "scaling_workers_default": "1",
     },
-    "2": {
-        "label": "python_st -> async_rust",
-        "before_mode": "python_st",
-        "after_mode": "async_rust",
-        "size_scale": "1.0",
-        "workers_default": "1",
-        "scaling_workers_default": "1",
-    },
     "3": {
         "label": "python_st -> rust_mt",
         "before_mode": "python_st",

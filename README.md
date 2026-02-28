@@ -34,7 +34,6 @@ This repo includes no built-in Rust paths; it is standard Python code only.
 
 ## Demo scenarios (`bench.py`)
 - `1`: `python_st -> rust_st` (workers `1`)
-- `2`: `python_st -> async_rust` (workers `1`)
 - `3`: `python_st -> rust_mt` (workers `1,2,4`)
 - `4`: `python_mt -> rust_mt` (workers `1,2,4`)
 
