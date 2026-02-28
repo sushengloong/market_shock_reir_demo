@@ -114,11 +114,11 @@ def run_processing(
 ) -> dict[str, object]:
     if execution_mode == "auto":
         return process_json_lines(lines, workers=workers)
-    if execution_mode == "python_st":
+    if execution_mode in {"python_st", "rust_st"}:
         return process_json_lines_py(lines)
-    if execution_mode == "python_mt":
+    if execution_mode in {"python_mt", "rust_mt"}:
         return process_json_lines_py_mt(lines, workers=workers)
-    if execution_mode == "python_async":
+    if execution_mode in {"python_async", "rust_async", "async_rust"}:
         return asyncio.run(process_json_lines_py_async(lines, workers=workers))
 
     raise ValueError(f"Unknown execution_mode: {execution_mode}")

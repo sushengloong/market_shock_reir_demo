@@ -13,30 +13,37 @@ from slowlib.api import generate_json_lines, run_processing
 
 
 SCENARIOS: dict[str, dict[str, str]] = {
-    "1a": {
-        "label": "single-threaded parser hot path (baseline vs REIR-applied)",
-        "mode": "python_st",
+    "1": {
+        "label": "python_st -> rust_st",
+        "before_mode": "python_st",
+        "after_mode": "rust_st",
         "size_scale": "1.0",
-    },
-    "1b": {
-        "label": "single-threaded parser hot path (denser payload)",
-        "mode": "python_st",
-        "size_scale": "1.6",
-    },
-    "1c": {
-        "label": "single-threaded parser hot path (max pressure)",
-        "mode": "python_st",
-        "size_scale": "2.2",
+        "workers_default": "1",
+        "scaling_workers_default": "1",
     },
     "2": {
-        "label": "multi-threaded Python parser hot path",
-        "mode": "python_mt",
-        "size_scale": "1.4",
+        "label": "python_st -> async_rust",
+        "before_mode": "python_st",
+        "after_mode": "async_rust",
+        "size_scale": "1.0",
+        "workers_default": "1",
+        "scaling_workers_default": "1",
     },
     "3": {
-        "label": "async Python parser hot path",
-        "mode": "python_async",
+        "label": "python_st -> rust_mt",
+        "before_mode": "python_st",
+        "after_mode": "rust_mt",
+        "size_scale": "1.6",
+        "workers_default": "4",
+        "scaling_workers_default": "1,2,4",
+    },
+    "4": {
+        "label": "python_mt -> rust_mt",
+        "before_mode": "python_mt",
+        "after_mode": "rust_mt",
         "size_scale": "1.4",
+        "workers_default": "4",
+        "scaling_workers_default": "1,2,4",
     },
 }
 
@@ -75,8 +82,20 @@ def percentile(values: list[float], q: float) -> float:
 
 
 def execution_mode_for_scenario(scenario: str, phase: str) -> str:
-    _ = phase
-    return str(SCENARIOS[scenario]["mode"])
+    config = SCENARIOS[scenario]
+    if phase == "before":
+        return str(config["before_mode"])
+    return str(config["after_mode"])
+
+
+def default_workers_for_scenario(scenario: str) -> int:
+    raw = int(SCENARIOS[scenario].get("workers_default", "1"))
+    return max(1, raw)
+
+
+def default_scaling_workers_for_scenario(scenario: str) -> list[int]:
+    spec = SCENARIOS[scenario].get("scaling_workers_default", "1")
+    return parse_workers(str(spec))
 
 
 def size_for_scenario(size: int, scenario: str) -> int:
@@ -248,17 +267,27 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--story-mode", default="normal", choices=["normal", "credential_stuffing_spike"])
-    parser.add_argument("--scenario", default="1a", choices=sorted(SCENARIOS.keys()))
+    parser.add_argument("--scenario", default="1", choices=sorted(SCENARIOS.keys()))
     parser.add_argument("--phase", default="before", choices=["before", "after"])
-    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--workers", type=int, default=0, help="Workers per job (0 uses scenario default)")
     parser.add_argument("--gil-demo", action="store_true", help="Add worker-scaling table for current scenario phase")
-    parser.add_argument("--scaling-workers", default="1,2,4", help="Comma-separated worker counts for --gil-demo")
+    parser.add_argument(
+        "--scaling-workers",
+        default="",
+        help="Comma-separated worker counts for --gil-demo (empty uses scenario default)",
+    )
     parser.add_argument("--json-out", type=Path, default=None)
     parser.add_argument("--profile", action="store_true", help="No-op flag for compatibility")
     args = parser.parse_args()
 
     size = 5_000 if args.quick else args.size
     runs = 3 if args.quick else args.runs
+    workers = max(1, args.workers) if args.workers > 0 else default_workers_for_scenario(args.scenario)
+    scaling_workers = (
+        parse_workers(args.scaling_workers)
+        if args.scaling_workers.strip()
+        else default_scaling_workers_for_scenario(args.scenario)
+    )
 
     report = run_benchmark(
         size=size,
@@ -267,7 +296,7 @@ def main() -> None:
         story_mode=args.story_mode,
         scenario=args.scenario,
         phase=args.phase,
-        workers=max(1, args.workers),
+        workers=workers,
     )
     if args.gil_demo:
         report["gil_demo"] = run_scaling_demo(
@@ -277,8 +306,8 @@ def main() -> None:
             story_mode=args.story_mode,
             scenario=args.scenario,
             phase=args.phase,
-            workers=parse_workers(args.scaling_workers),
-            workers_per_job=max(1, args.workers),
+            workers=scaling_workers,
+            workers_per_job=workers,
         )
 
     output = json.dumps(report, indent=2)

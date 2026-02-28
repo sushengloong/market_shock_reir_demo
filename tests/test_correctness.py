@@ -23,6 +23,12 @@ def test_mode_parity() -> None:
     baseline = run_workload(size=400, seed=17, story_mode="normal", execution_mode="python_st")
     mt = run_workload(size=400, seed=17, story_mode="normal", execution_mode="python_mt", workers=4)
     py_async = run_workload(size=400, seed=17, story_mode="normal", execution_mode="python_async", workers=4)
+    rust_st_alias = run_workload(size=400, seed=17, story_mode="normal", execution_mode="rust_st")
+    async_rust_alias = run_workload(size=400, seed=17, story_mode="normal", execution_mode="async_rust", workers=1)
+    rust_mt_alias = run_workload(size=400, seed=17, story_mode="normal", execution_mode="rust_mt", workers=4)
 
     assert mt == baseline
     assert py_async == baseline
+    assert rust_st_alias == baseline
+    assert async_rust_alias == baseline
+    assert rust_mt_alias == baseline

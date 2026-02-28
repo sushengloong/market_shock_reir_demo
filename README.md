@@ -27,16 +27,16 @@ This repo includes no built-in Rust paths; it is standard Python code only.
 - `python_st`
 - `python_mt`
 - `python_async`
+- `rust_st` (alias mode for REIR-applied runs)
+- `rust_mt` (alias mode for REIR-applied runs)
+- `async_rust` (alias mode for REIR-applied runs)
 - `auto` (defaults to `python_st`)
 
 ## Demo scenarios (`bench.py`)
-- `1a`: single-thread parser hot path
-- `1b`: single-thread parser hot path (denser payload)
-- `1c`: single-thread parser hot path (max pressure)
-- `2`: multi-thread parser hot path
-- `3`: async parser hot path
-
-Before/after compare the same Python execution mode. The delta comes from `reir apply` patching selected functions.
+- `1`: `python_st -> rust_st` (workers `1`)
+- `2`: `python_st -> async_rust` (workers `1`)
+- `3`: `python_st -> rust_mt` (workers `1,2,4`)
+- `4`: `python_mt -> rust_mt` (workers `1,2,4`)
 
 ## Install
 ```bash
@@ -49,9 +49,9 @@ pip install -e .
 
 ## Run benchmark
 ```bash
-python -m slowlib.benchmarks.bench --scenario 1a --phase before --json-out .reir/before_1a.json
-python -m slowlib.benchmarks.bench --scenario 1a --phase after --json-out .reir/after_1a.json
-python -m slowlib.benchmarks.bench --scenario 2 --phase before --workers 4 --gil-demo --scaling-workers 1,2,4 --json-out .reir/scenario2_before.json
+python -m slowlib.benchmarks.bench --scenario 1 --phase before --json-out .reir/before_1.json
+python -m slowlib.benchmarks.bench --scenario 1 --phase after --json-out .reir/after_1.json
+python -m slowlib.benchmarks.bench --scenario 4 --phase before --gil-demo --json-out .reir/scenario4_before.json
 ```
 
 The benchmark prints deterministic JSON with median/p95 and optional scaling table.
