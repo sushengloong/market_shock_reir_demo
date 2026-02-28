@@ -11,8 +11,6 @@ from .slow_ops import (
     process_json_lines_py,
     process_json_lines_py_async,
     process_json_lines_py_mt,
-    process_json_lines_rust,
-    process_json_lines_rust_async,
 )
 
 
@@ -25,38 +23,40 @@ class WorkloadConfig:
 
 def _iter_json_lines(size: int, seed: int = 42, story_mode: str = "normal") -> Iterator[str]:
     rnd = random.Random(seed)
-    symbols = ["AAPL", "MSFT", "NVDA", "TSLA", "AMD", "AMZN"]
-    venues = ["XNYS", "XNAS", "ARCX", "BATS"]
+    services = ["auth-api", "payments-api", "orders-api", "profile-api", "search-api", "edge-gateway"]
+    regions = ["sg-1", "us-2", "eu-1", "au-1"]
+    methods = ["password", "otp", "webauthn", "magic_link"]
+    user_agents = ["chrome", "safari", "firefox", "mobile-app"]
 
     for i in range(size):
-        symbol = symbols[i % len(symbols)]
-        venue = venues[(i * 3) % len(venues)]
+        symbol = services[i % len(services)]
+        venue = regions[(i * 5) % len(regions)]
 
-        base_px = {
-            "AAPL": 190.0,
-            "MSFT": 420.0,
-            "NVDA": 880.0,
-            "TSLA": 205.0,
-            "AMD": 165.0,
-            "AMZN": 178.0,
+        base_latency_ms = {
+            "auth-api": 42.0,
+            "payments-api": 88.0,
+            "orders-api": 61.0,
+            "profile-api": 35.0,
+            "search-api": 54.0,
+            "edge-gateway": 28.0,
         }[symbol]
 
-        jitter = rnd.uniform(-2.5, 2.5)
-        price = base_px + jitter
-        size_qty = rnd.randint(10, 400)
-        headline = f"Routine session flow in {symbol} on {venue}."
+        jitter = rnd.uniform(-8.0, 8.0)
+        price = max(1.0, base_latency_ms + jitter)
+        size_qty = rnd.randint(20, 700)
+        headline = f"Normal auth flow in {symbol} {venue}."
 
-        if story_mode == "liberation_day_tariff_spike":
+        if story_mode == "credential_stuffing_spike":
             spike_window = size // 3 <= i < (size // 3 + max(200, size // 20))
             if spike_window:
-                price += rnd.uniform(-12.0, 12.0)
-                size_qty = rnd.randint(500, 4000)
+                price += rnd.uniform(20.0, 120.0)
+                size_qty = rnd.randint(1200, 14000)
                 headline = (
-                    "Liberation Day remarks: Trump tariff escalation hits risk assets; "
-                    f"{symbol} sees panic then relief bids on {venue}."
+                    "Credential stuffing burst: elevated failed logins and retry storms; "
+                    f"{symbol} in {venue} sees lockout pressure."
                 )
             elif i % 17 == 0:
-                headline = f"Desk chatter: possible tariff carve-outs and Fed response for {symbol} on {venue}."
+                headline = f"SOC alert: suspicious bot retries detected on {symbol} in {venue}."
 
         obj = {
             "ts": 1_700_000_000 + i,
@@ -67,18 +67,33 @@ def _iter_json_lines(size: int, seed: int = 42, story_mode: str = "normal") -> I
             "side": "B" if (i % 2 == 0) else "S",
             "headline": headline,
             "event_id": i,
+            "trace": {
+                "ip_octets": [rnd.randint(1, 255) for _ in range(4)],
+                "asn": rnd.randint(1_000, 99_999),
+                "country": ["SG", "US", "DE", "AU"][i % 4],
+                "agent": user_agents[(i * 7) % len(user_agents)],
+            },
+            "auth": {
+                "method": methods[(i * 11) % len(methods)],
+                "attempts": rnd.randint(1, 12),
+                "signals": [
+                    {"k": "velocity_1m", "v": round(rnd.uniform(0.0, 1.0), 4)},
+                    {"k": "velocity_5m", "v": round(rnd.uniform(0.0, 1.0), 4)},
+                    {"k": "ip_reputation", "v": round(rnd.uniform(0.0, 1.0), 4)},
+                    {"k": "device_age", "v": round(rnd.uniform(0.0, 1.0), 4)},
+                ],
+            },
+            "evidence": [
+                {"rule": "geo_mismatch", "score": round(rnd.uniform(0.0, 1.0), 4)},
+                {"rule": "impossible_travel", "score": round(rnd.uniform(0.0, 1.0), 4)},
+                {"rule": "ua_churn", "score": round(rnd.uniform(0.0, 1.0), 4)},
+            ],
         }
         yield json.dumps(obj, separators=(",", ":"))
 
 
 def generate_json_lines(size: int, seed: int = 42, story_mode: str = "normal") -> list[str]:
     return list(_iter_json_lines(size=size, seed=seed, story_mode=story_mode))
-
-
-def generate_json_payload(size: int, seed: int = 42, story_mode: str = "normal") -> str:
-    # Use a single JSONL payload for Rust paths to avoid per-line Python->Rust
-    # conversion/allocation overhead across the FFI boundary.
-    return "\n".join(_iter_json_lines(size=size, seed=seed, story_mode=story_mode))
 
 
 def run_workload(
@@ -88,27 +103,22 @@ def run_workload(
     execution_mode: str = "auto",
     workers: int = 4,
 ) -> dict[str, object]:
+    lines = generate_json_lines(size=size, seed=seed, story_mode=story_mode)
+    return run_processing(lines=lines, execution_mode=execution_mode, workers=workers)
+
+
+def run_processing(
+    lines: list[str],
+    execution_mode: str = "auto",
+    workers: int = 4,
+) -> dict[str, object]:
     if execution_mode == "auto":
-        lines = generate_json_lines(size=size, seed=seed, story_mode=story_mode)
         return process_json_lines(lines, workers=workers)
     if execution_mode == "python_st":
-        lines = generate_json_lines(size=size, seed=seed, story_mode=story_mode)
         return process_json_lines_py(lines)
     if execution_mode == "python_mt":
-        lines = generate_json_lines(size=size, seed=seed, story_mode=story_mode)
         return process_json_lines_py_mt(lines, workers=workers)
     if execution_mode == "python_async":
-        lines = generate_json_lines(size=size, seed=seed, story_mode=story_mode)
         return asyncio.run(process_json_lines_py_async(lines, workers=workers))
-
-    if execution_mode == "rust_st":
-        payload = generate_json_payload(size=size, seed=seed, story_mode=story_mode)
-        return process_json_lines_rust(payload, rust_mode="st", workers=workers)
-    if execution_mode == "rust_mt":
-        payload = generate_json_payload(size=size, seed=seed, story_mode=story_mode)
-        return process_json_lines_rust(payload, rust_mode="mt", workers=workers)
-    if execution_mode == "rust_async":
-        payload = generate_json_payload(size=size, seed=seed, story_mode=story_mode)
-        return asyncio.run(process_json_lines_rust_async(payload, workers=workers))
 
     raise ValueError(f"Unknown execution_mode: {execution_mode}")

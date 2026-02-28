@@ -1,45 +1,49 @@
-# market_shock_reir_demo
+# auth_stream_reir_demo (repo name retained for compatibility)
 
-Intentionally slow Python project for `reir` demos.
+Plain-vanilla Python target project for `reir` demos.
 
 ## Scenario
-A simulated market-data pipeline ingests JSON trade events and policy headlines, then computes:
-- per-symbol traded notional
-- per-venue volume totals
-- a macro "shock score" from headline keywords
+A simulated auth/security telemetry pipeline ingests JSONL events and computes:
+- per-service weighted load (`notional_by_symbol`)
+- per-region volume totals (`venue_volume`)
+- alert/shock score from incident keywords
 - deterministic checksum for correctness checks
 
 ## Story mode
-Use `--story-mode liberation_day_tariff_spike` to simulate a deterministic burst of volume/headline intensity after a fictional policy shock.
+Use `--story-mode credential_stuffing_spike` to simulate a deterministic burst of suspicious login activity.
 
-## What is slow on purpose?
-- `json.loads` in a tight loop
-- `re.compile` inside the hot loop
+## What is intentionally slow?
+- repeated `json.loads` in the same hot loop
+- `re.compile` inside the loop
 - string concatenation in a loop
-- nested loops with char-by-char keyword checks
+- nested token scans with char-by-char checks
+
+This repo includes no built-in Rust paths; it is standard Python code only.
 
 ## Execution modes
 `run_workload(..., execution_mode=...)` supports:
-- `python_st`, `python_mt`, `python_async`
-- `rust_st`, `rust_mt`, `rust_async`
-- `auto` (default; switches when patched by `reir apply`)
+- `python_st`
+- `python_mt`
+- `python_async`
+- `auto` (defaults to `python_st`)
 
 ## Demo scenarios (`bench.py`)
-- `1a`: Python ST -> Rust ST
-- `1b`: Python ST -> Rust MT
-- `1c`: Python ST -> Rust async
-- `2`: Python MT -> Rust MT
-- `3`: Python async -> Rust async
+- `1a`: single-thread parser hot path
+- `1b`: single-thread parser hot path (denser payload)
+- `1c`: single-thread parser hot path (max pressure)
+- `2`: multi-thread parser hot path
+- `3`: async parser hot path
+
+Before/after compare the same Python execution mode. The delta comes from `reir apply` patching selected functions.
 
 ## Install
 ```bash
 pip install -e .
 ```
 
-## Rust folder policy
-- This repo is kept as a pure Python target by default.
-- `reir apply` generates `rust/reir_ext/` on demand.
-- `rust/` is ignored in `.gitignore` and should not be committed.
+## Repo policy
+- Keep this repo pure Python.
+- Commit only the Python source and benchmark assets used by this demo.
 
 ## Run benchmark
 ```bash

@@ -9,34 +9,34 @@ import sys
 import time
 from pathlib import Path
 
-from slowlib.api import run_workload
+from slowlib.api import generate_json_lines, run_processing
 
 
 SCENARIOS: dict[str, dict[str, str]] = {
     "1a": {
-        "label": "LLM auto: single-threaded Python -> single-threaded Rust",
-        "before_mode": "python_st",
-        "after_mode": "rust_st",
+        "label": "single-threaded parser hot path (baseline vs REIR-applied)",
+        "mode": "python_st",
+        "size_scale": "1.0",
     },
     "1b": {
-        "label": "LLM auto: single-threaded Python -> multi-threaded Rust",
-        "before_mode": "python_st",
-        "after_mode": "rust_mt",
+        "label": "single-threaded parser hot path (denser payload)",
+        "mode": "python_st",
+        "size_scale": "1.6",
     },
     "1c": {
-        "label": "LLM auto: single-threaded Python -> async Rust",
-        "before_mode": "python_st",
-        "after_mode": "rust_async",
+        "label": "single-threaded parser hot path (max pressure)",
+        "mode": "python_st",
+        "size_scale": "2.2",
     },
     "2": {
-        "label": "multi-threaded Python -> multi-threaded Rust",
-        "before_mode": "python_mt",
-        "after_mode": "rust_mt",
+        "label": "multi-threaded Python parser hot path",
+        "mode": "python_mt",
+        "size_scale": "1.4",
     },
     "3": {
-        "label": "async Python -> async Rust",
-        "before_mode": "python_async",
-        "after_mode": "rust_async",
+        "label": "async Python parser hot path",
+        "mode": "python_async",
+        "size_scale": "1.4",
     },
 }
 
@@ -75,8 +75,14 @@ def percentile(values: list[float], q: float) -> float:
 
 
 def execution_mode_for_scenario(scenario: str, phase: str) -> str:
-    config = SCENARIOS[scenario]
-    return config["before_mode"] if phase == "before" else config["after_mode"]
+    _ = phase
+    return str(SCENARIOS[scenario]["mode"])
+
+
+def size_for_scenario(size: int, scenario: str) -> int:
+    raw = float(SCENARIOS[scenario].get("size_scale", "1.0"))
+    scaled = int(round(size * raw))
+    return max(1, scaled)
 
 
 def run_benchmark(
@@ -89,6 +95,7 @@ def run_benchmark(
     workers: int,
 ) -> dict[str, object]:
     mode = execution_mode_for_scenario(scenario, phase)
+    scenario_size = size_for_scenario(size=size, scenario=scenario)
     timings_ms: list[float] = []
     cpu_util_pct: list[float] = []
     peak_rss_mb: list[float] = []
@@ -96,16 +103,15 @@ def run_benchmark(
     checksum = None
 
     for run_idx in range(runs):
+        lines = generate_json_lines(
+            size=scenario_size,
+            seed=seed + run_idx * 100_003,
+            story_mode=story_mode,
+        )
         rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         cpu_t0 = time.process_time()
         t0 = time.perf_counter()
-        result = run_workload(
-            size=size,
-            seed=seed + run_idx * 100_003,
-            story_mode=story_mode,
-            execution_mode=mode,
-            workers=workers,
-        )
+        result = run_processing(lines=lines, execution_mode=mode, workers=workers)
         elapsed_s = time.perf_counter() - t0
         elapsed_ms = elapsed_s * 1000.0
         cpu_elapsed = time.process_time() - cpu_t0
@@ -118,13 +124,14 @@ def run_benchmark(
         checksum = result["checksum"]
 
     return {
-        "workload": f"market_data_{scenario}_{phase}_{story_mode}_size_{size}",
+        "workload": f"auth_stream_{scenario}_{phase}_{story_mode}_size_{scenario_size}",
         "scenario": scenario,
         "scenario_label": SCENARIOS[scenario]["label"],
         "phase": phase,
         "execution_mode": mode,
         "runs": runs,
         "workers": workers,
+        "size": scenario_size,
         "story_mode": story_mode,
         "median_ms": round(statistics.median(timings_ms), 3),
         "p95_ms": round(percentile(timings_ms, 0.95), 3),
@@ -147,21 +154,20 @@ def run_scaling_demo(
     workers_per_job: int,
 ) -> dict[str, object]:
     mode = execution_mode_for_scenario(scenario, phase)
+    scenario_size = size_for_scenario(size=size, scenario=scenario)
 
     rows: list[dict[str, object]] = []
     baseline_median_ms = None
     baseline_throughput = None
 
-    def parallel_once(concurrency: int, run_seed: int) -> int:
+    def parallel_once(prepared_inputs: list[list[str]], concurrency: int) -> int:
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
             futures = [
                 pool.submit(
-                    run_workload,
-                    size=size,
-                    seed=run_seed + idx * 10_007,
-                    story_mode=story_mode,
-                    execution_mode=mode,
-                    workers=workers_per_job,
+                    run_processing,
+                    prepared_inputs[idx],
+                    mode,
+                    workers_per_job,
                 )
                 for idx in range(concurrency)
             ]
@@ -176,10 +182,18 @@ def run_scaling_demo(
         checksum = None
 
         for run_idx in range(runs):
+            prepared_inputs = [
+                generate_json_lines(
+                    size=scenario_size,
+                    seed=seed + run_idx * 100_003 + idx * 10_007,
+                    story_mode=story_mode,
+                )
+                for idx in range(worker_count)
+            ]
             rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
             cpu_t0 = time.process_time()
             t0 = time.perf_counter()
-            result_checksum = parallel_once(worker_count, seed + run_idx * 100_003)
+            result_checksum = parallel_once(prepared_inputs, worker_count)
             elapsed_s = time.perf_counter() - t0
             elapsed_ms = elapsed_s * 1000.0
             cpu_elapsed = time.process_time() - cpu_t0
@@ -193,7 +207,7 @@ def run_scaling_demo(
 
         median_ms = statistics.median(timings_ms)
         p95_ms = percentile(timings_ms, 0.95)
-        throughput_eps = (worker_count * size) / (median_ms / 1000.0)
+        throughput_eps = (worker_count * scenario_size) / (median_ms / 1000.0)
 
         if baseline_median_ms is None:
             baseline_median_ms = median_ms
@@ -221,19 +235,19 @@ def run_scaling_demo(
         "phase": phase,
         "execution_mode": mode,
         "workers_per_job": workers_per_job,
-        "size_per_worker": size,
+        "size_per_worker": scenario_size,
         "scaling": rows,
         "note": "Scaling run for selected scenario/phase.",
     }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Deterministic benchmark for market_shock_reir_demo")
+    parser = argparse.ArgumentParser(description="Deterministic benchmark for auth_stream_reir_demo")
     parser.add_argument("--runs", type=int, default=7)
     parser.add_argument("--size", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--quick", action="store_true")
-    parser.add_argument("--story-mode", default="normal", choices=["normal", "liberation_day_tariff_spike"])
+    parser.add_argument("--story-mode", default="normal", choices=["normal", "credential_stuffing_spike"])
     parser.add_argument("--scenario", default="1a", choices=sorted(SCENARIOS.keys()))
     parser.add_argument("--phase", default="before", choices=["before", "after"])
     parser.add_argument("--workers", type=int, default=4)

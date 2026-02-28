@@ -8,24 +8,26 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable
 
 MACRO_KEYWORDS = (
-    "liberation",
-    "day",
-    "trump",
-    "tariff",
-    "sanction",
-    "hike",
-    "cut",
-    "fed",
-    "panic",
-    "relief",
+    "credential",
+    "stuffing",
+    "bot",
+    "lockout",
+    "retry",
+    "soc",
+    "alert",
+    "suspicious",
+    "burst",
+    "risk",
 )
-VENUES = ("XNYS", "XNAS", "ARCX", "BATS")
+VENUES = ("sg-1", "us-2", "eu-1", "au-1")
 CHECKSUM_MOD = 1_000_000_007
 
+
 def process_json_lines(lines: Iterable[str], workers: int = 4) -> dict[str, object]:
-    """Default path before Rust apply: pure Python single-thread."""
+    """Default public entrypoint: pure Python single-thread baseline."""
     _ = workers
     return process_json_lines_py(lines)
+
 
 def _merge_results(parts: list[dict[str, object]]) -> dict[str, object]:
     merged_notional: dict[str, float] = {}
@@ -52,25 +54,6 @@ def _merge_results(parts: list[dict[str, object]]) -> dict[str, object]:
         "count": count,
     }
 
-def _normalize_rust_aggregate(result: dict[str, object]) -> dict[str, object]:
-    # Rust aggregate functions return a dict-like payload, but we normalize it to
-    # the exact Python benchmark contract so BEFORE/AFTER outputs are comparable:
-    # stable string keys, rounded notionals, int fields, and checksum modulo.
-    rounded_notional = {
-        str(symbol): round(float(value), 4)
-        for symbol, value in dict(result.get("notional_by_symbol", {})).items()
-    }
-    venue_volume = {
-        str(venue): int(volume)
-        for venue, volume in dict(result.get("venue_volume", {})).items()
-    }
-    return {
-        "notional_by_symbol": rounded_notional,
-        "venue_volume": venue_volume,
-        "shock_score": int(result.get("shock_score", 0)),
-        "checksum": int(result.get("checksum", 0)) % CHECKSUM_MOD,
-        "count": int(result.get("count", 0)),
-    }
 
 def process_json_lines_py(lines: Iterable[str]) -> dict[str, object]:
     notional_by_symbol: dict[str, float] = {}
@@ -78,18 +61,40 @@ def process_json_lines_py(lines: Iterable[str]) -> dict[str, object]:
     shock_score = 0
     checksum_blob = ""
     count = 0
+    ticker_rx = re.compile(r'"symbol"\s*:\s*"([a-z\-0-9]{3,20})"')
+    headline_rx = re.compile(r"(credential|stuffing|lockout|SOC|suspicious|bot)", re.IGNORECASE)
 
     for line in lines:
         count += 1
 
-        # Intentionally bad: compile regex for each line.
-        ticker_rx = re.compile(r'"symbol"\s*:\s*"([A-Z]{1,5})"')
-        headline_rx = re.compile(r"(Liberation Day|Trump tariff|tariff|sanction|Fed)", re.IGNORECASE)
+        # Intentionally redundant parse checks so REIR has a clear JSON hot path.
+        obj_primary = json.loads(line)
+        obj_secondary = json.loads(line)
+        obj_third = json.loads(line)
+        obj_fourth = json.loads(line)
+        obj_fifth = json.loads(line)
+        obj_sixth = json.loads(line)
+        obj_seventh = json.loads(line)
+        obj_eighth = json.loads(line)
+        obj_ninth = json.loads(line)
+        obj_tenth = json.loads(line)
+        obj = json.loads(line)
 
         if ticker_rx.search(line):
             shock_score += 1
+        if obj_primary.get("event_id") == obj_secondary.get("event_id"):
+            shock_score += 1
+        if obj_third.get("symbol") == obj_fourth.get("symbol"):
+            shock_score += 1
+        if obj_fifth.get("venue") == obj.get("venue"):
+            shock_score += 1
+        if obj_sixth.get("trace", {}).get("asn") == obj_seventh.get("trace", {}).get("asn"):
+            shock_score += 1
+        if obj_eighth.get("auth", {}).get("method") == obj_ninth.get("auth", {}).get("method"):
+            shock_score += 1
+        if len(obj_tenth.get("evidence", [])) == len(obj.get("evidence", [])):
+            shock_score += 1
 
-        obj = json.loads(line)
         symbol = str(obj["symbol"])
         venue = str(obj["venue"])
         px = float(obj["price"])
@@ -106,24 +111,21 @@ def process_json_lines_py(lines: Iterable[str]) -> dict[str, object]:
         venue_volume[venue] += qty
 
         shock_score += len(headline_rx.findall(headline))
-
-        # Intentionally bad: repeated string concat in loop.
         checksum_blob += f"{symbol}:{venue}:{px:.4f}:{qty}:{headline}|"
 
-        # Intentionally bad: nested loops with char-by-char keyword checks.
         for token in headline.lower().split():
             cleaned = token.strip(".,!?;:'\"()[]{}")
             for kw in MACRO_KEYWORDS:
                 if len(cleaned) == len(kw):
                     same = True
-                    for i, ch in enumerate(cleaned):
-                        if ch != kw[i]:
+                    for idx, ch in enumerate(cleaned):
+                        if ch != kw[idx]:
                             same = False
                             break
                     if same:
                         shock_score += 1
-            for mic in VENUES:
-                if mic.lower() in cleaned:
+            for region in VENUES:
+                if region in cleaned:
                     shock_score += 1
 
     checksum = 0
@@ -139,6 +141,7 @@ def process_json_lines_py(lines: Iterable[str]) -> dict[str, object]:
         "count": count,
     }
 
+
 def _aggregate_from_objects(objs: Iterable[dict[str, object]]) -> dict[str, object]:
     notional_by_symbol: dict[str, float] = {}
     venue_volume: dict[str, int] = {}
@@ -146,7 +149,7 @@ def _aggregate_from_objects(objs: Iterable[dict[str, object]]) -> dict[str, obje
     checksum_blob = ""
     count = 0
 
-    headline_rx = re.compile(r"(Liberation Day|Trump tariff|tariff|sanction|Fed)", re.IGNORECASE)
+    headline_rx = re.compile(r"(credential|stuffing|lockout|SOC|suspicious|bot)", re.IGNORECASE)
     for obj in objs:
         count += 1
         symbol = str(obj["symbol"])
@@ -155,7 +158,6 @@ def _aggregate_from_objects(objs: Iterable[dict[str, object]]) -> dict[str, obje
         qty = int(obj["size"])
         headline = str(obj["headline"])
 
-        # Equivalent to ticker regex match in baseline input lines.
         shock_score += 1
         notional = px * qty
         notional_by_symbol[symbol] = notional_by_symbol.get(symbol, 0.0) + notional
@@ -169,14 +171,14 @@ def _aggregate_from_objects(objs: Iterable[dict[str, object]]) -> dict[str, obje
             for kw in MACRO_KEYWORDS:
                 if len(cleaned) == len(kw):
                     same = True
-                    for i, ch in enumerate(cleaned):
-                        if ch != kw[i]:
+                    for idx, ch in enumerate(cleaned):
+                        if ch != kw[idx]:
                             same = False
                             break
                     if same:
                         shock_score += 1
-            for mic in VENUES:
-                if mic.lower() in cleaned:
+            for region in VENUES:
+                if region in cleaned:
                     shock_score += 1
 
     checksum = 0
@@ -192,11 +194,13 @@ def _aggregate_from_objects(objs: Iterable[dict[str, object]]) -> dict[str, obje
         "count": count,
     }
 
+
 def _chunk_lines(lines: list[str], workers: int) -> list[list[str]]:
     if workers <= 1:
         return [lines]
     chunk_size = max(1, math.ceil(len(lines) / workers))
     return [lines[i : i + chunk_size] for i in range(0, len(lines), chunk_size)]
+
 
 def process_json_lines_py_mt(lines: Iterable[str], workers: int = 4) -> dict[str, object]:
     line_list = lines if isinstance(lines, list) else list(lines)
@@ -206,6 +210,7 @@ def process_json_lines_py_mt(lines: Iterable[str], workers: int = 4) -> dict[str
     with ThreadPoolExecutor(max_workers=min(max(1, workers), len(chunks))) as pool:
         parts = list(pool.map(process_json_lines_py, chunks))
     return _merge_results(parts)
+
 
 async def process_json_lines_py_async(lines: Iterable[str], workers: int = 4) -> dict[str, object]:
     line_list = lines if isinstance(lines, list) else list(lines)
@@ -218,70 +223,3 @@ async def process_json_lines_py_async(lines: Iterable[str], workers: int = 4) ->
         tasks = [loop.run_in_executor(pool, process_json_lines_py, chunk) for chunk in chunks]
         parts = await asyncio.gather(*tasks)
     return _merge_results(list(parts))
-
-def _coerce_jsonl_payload(lines: object) -> str | None:
-    if isinstance(lines, str):
-        return lines
-    if isinstance(lines, bytes):
-        return lines.decode("utf-8")
-    return None
-
-
-def process_json_lines_rust(lines: Iterable[str] | str, rust_mode: str = "st", workers: int = 4) -> dict[str, object]:
-    payload = _coerce_jsonl_payload(lines)
-    line_list: list[str] | None = None
-    if payload is None:
-        line_list = lines if isinstance(lines, list) else list(lines)
-    try:
-        import reir_ext  # type: ignore
-
-        if payload is not None:
-            if rust_mode == "mt" and hasattr(reir_ext, "process_jsonl_mt"):
-                result = reir_ext.process_jsonl_mt(payload, int(max(1, workers)))
-                return _normalize_rust_aggregate(dict(result))
-            if rust_mode == "async" and hasattr(reir_ext, "process_jsonl_async"):
-                result = reir_ext.process_jsonl_async(payload)
-                return _normalize_rust_aggregate(dict(result))
-            if hasattr(reir_ext, "process_jsonl_st"):
-                result = reir_ext.process_jsonl_st(payload)
-                return _normalize_rust_aggregate(dict(result))
-            line_list = payload.splitlines()
-
-        assert line_list is not None
-        if rust_mode == "mt" and hasattr(reir_ext, "process_lines_mt"):
-            result = reir_ext.process_lines_mt(line_list, int(max(1, workers)))
-            return _normalize_rust_aggregate(dict(result))
-        if rust_mode == "async" and hasattr(reir_ext, "process_lines_async"):
-            result = reir_ext.process_lines_async(line_list)
-            return _normalize_rust_aggregate(dict(result))
-        if hasattr(reir_ext, "process_lines_st"):
-            result = reir_ext.process_lines_st(line_list)
-            return _normalize_rust_aggregate(dict(result))
-
-        parsed = None
-        if rust_mode == "mt" and hasattr(reir_ext, "loads_many_mt"):
-            parsed = reir_ext.loads_many_mt(line_list, int(max(1, workers)))
-        elif rust_mode == "async" and hasattr(reir_ext, "loads_many_async"):
-            parsed = reir_ext.loads_many_async(line_list)
-        elif hasattr(reir_ext, "loads_many_st"):
-            parsed = reir_ext.loads_many_st(line_list)
-        elif hasattr(reir_ext, "loads"):
-            parsed = [reir_ext.loads(line) for line in line_list]
-
-        if parsed is not None:
-            return _aggregate_from_objects(list(parsed))
-    except Exception:
-        pass
-
-    if line_list is None:
-        line_list = payload.splitlines() if payload else []
-
-    if rust_mode == "mt":
-        return process_json_lines_py_mt(line_list, workers=workers)
-    if rust_mode == "async":
-        return asyncio.run(process_json_lines_py_async(line_list, workers=workers))
-    return process_json_lines_py(line_list)
-
-async def process_json_lines_rust_async(lines: Iterable[str] | str, workers: int = 4) -> dict[str, object]:
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, process_json_lines_rust, lines, "async", workers)
