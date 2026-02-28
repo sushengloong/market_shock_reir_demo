@@ -52,6 +52,26 @@ def _merge_results(parts: list[dict[str, object]]) -> dict[str, object]:
         "count": count,
     }
 
+def _normalize_rust_aggregate(result: dict[str, object]) -> dict[str, object]:
+    # Rust aggregate functions return a dict-like payload, but we normalize it to
+    # the exact Python benchmark contract so BEFORE/AFTER outputs are comparable:
+    # stable string keys, rounded notionals, int fields, and checksum modulo.
+    rounded_notional = {
+        str(symbol): round(float(value), 4)
+        for symbol, value in dict(result.get("notional_by_symbol", {})).items()
+    }
+    venue_volume = {
+        str(venue): int(volume)
+        for venue, volume in dict(result.get("venue_volume", {})).items()
+    }
+    return {
+        "notional_by_symbol": rounded_notional,
+        "venue_volume": venue_volume,
+        "shock_score": int(result.get("shock_score", 0)),
+        "checksum": int(result.get("checksum", 0)) % CHECKSUM_MOD,
+        "count": int(result.get("count", 0)),
+    }
+
 def process_json_lines_py(lines: Iterable[str]) -> dict[str, object]:
     notional_by_symbol: dict[str, float] = {}
     venue_volume: dict[str, int] = {}
@@ -203,6 +223,16 @@ def process_json_lines_rust(lines: Iterable[str], rust_mode: str = "st", workers
     line_list = list(lines)
     try:
         import reir_ext  # type: ignore
+
+        if rust_mode == "mt" and hasattr(reir_ext, "process_lines_mt"):
+            result = reir_ext.process_lines_mt(line_list, int(max(1, workers)))
+            return _normalize_rust_aggregate(dict(result))
+        if rust_mode == "async" and hasattr(reir_ext, "process_lines_async"):
+            result = reir_ext.process_lines_async(line_list)
+            return _normalize_rust_aggregate(dict(result))
+        if hasattr(reir_ext, "process_lines_st"):
+            result = reir_ext.process_lines_st(line_list)
+            return _normalize_rust_aggregate(dict(result))
 
         parsed = None
         if rust_mode == "mt" and hasattr(reir_ext, "loads_many_mt"):
